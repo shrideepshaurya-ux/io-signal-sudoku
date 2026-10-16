@@ -1,0 +1,169 @@
+{
+  "profile_name": "sample_tight_spare_baseplate_aligned",
+  "description": "SAMPLE profile: 25% empty baseplates, baseplate-aligned cables, soft grouping, 3 cabinets max.",
+  "hardware": {
+    "max_cabinets": 3,
+    "ciocs_per_cabinet": 4,
+    "baseplates_per_cioc": 8,
+    "charms_per_baseplate": 12
+  },
+  "naming": {
+    "system_cabinet": "SYS{cab:02d}",
+    "controller": "CTRL{cab:02d}-{cioc:02d}",
+    "marshalling_cabinet": "MC{cab:02d}",
+    "cioc": "CIOC{cab:02d}-{cioc:02d}",
+    "baseplate": "BP{cab:02d}-{cioc:02d}-{bp:02d}"
+  },
+  "grouping": {
+    "enabled": true,
+    "scope": "cabinet",
+    "mode": "soft",
+    "sequence_check": true
+  },
+  "segregation": {
+    "enabled": true,
+    "scope": "cioc",
+    "conflict_pairs": [
+      [
+        "A",
+        "B"
+      ]
+    ]
+  },
+  "cable": {
+    "enabled": true,
+    "standard_sizes": [
+      2,
+      6,
+      12,
+      24
+    ],
+    "continuity": "baseplate_aligned",
+    "spare_policy": "compact",
+    "require_cable_and_pair": true
+  },
+  "spare": {
+    "enabled": true,
+    "empty_baseplates_per_cabinet": null,
+    "fraction": 0.25,
+    "mode": "soft"
+  },
+  "compat": {
+    "AI": {
+      "charm_type": "AI CHARM",
+      "terminal_block": "STANDARD TERMINAL BLOCK",
+      "configuration": "",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    },
+    "AI|HART": {
+      "charm_type": "AI CHARM",
+      "terminal_block": "STANDARD TERMINAL BLOCK",
+      "configuration": "HART",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    },
+    "AI|RTD": {
+      "charm_type": "AI CHARM",
+      "terminal_block": "STANDARD TERMINAL BLOCK",
+      "configuration": "RTD",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    },
+    "AO": {
+      "charm_type": "AO CHARM",
+      "terminal_block": "STANDARD TERMINAL BLOCK",
+      "configuration": "",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    },
+    "AO|HART": {
+      "charm_type": "AO CHARM",
+      "terminal_block": "STANDARD TERMINAL BLOCK",
+      "configuration": "HART",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    },
+    "DI": {
+      "charm_type": "DI CHARM",
+      "terminal_block": "STANDARD TERMINAL BLOCK",
+      "configuration": "",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    },
+    "DO": {
+      "charm_type": "DO HIGH-SIDE CHARM",
+      "terminal_block": "STANDARD TERMINAL BLOCK",
+      "configuration": "",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    },
+    "DO|HIGH_CURRENT": {
+      "charm_type": "DO ISOLATED CHARM",
+      "terminal_block": "FUSED INJECTED POWER TERMINAL BLOCK",
+      "configuration": "",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    },
+    "DO|RELAY": {
+      "charm_type": "DO HIGH-SIDE CHARM",
+      "terminal_block": "RELAY OUTPUT TERMINAL BLOCK",
+      "configuration": "",
+      "status": "provisional",
+      "note": "Initial mapping from the problem statement; not a manufacturer specification."
+    }
+  },
+  "io_type_aliases": {
+    "AI": "AI",
+    "ANALOG INPUT": "AI",
+    "ANALOGUE INPUT": "AI",
+    "4-20MA INPUT": "AI",
+    "AI-HART": "AI|HART",
+    "AI HART": "AI|HART",
+    "AI_HART": "AI|HART",
+    "RTD": "AI|RTD",
+    "AI-RTD": "AI|RTD",
+    "AI RTD": "AI|RTD",
+    "AI_RTD": "AI|RTD",
+    "AO": "AO",
+    "ANALOG OUTPUT": "AO",
+    "ANALOGUE OUTPUT": "AO",
+    "AO-HART": "AO|HART",
+    "AO HART": "AO|HART",
+    "AO_HART": "AO|HART",
+    "DI": "DI",
+    "DIGITAL INPUT": "DI",
+    "DO": "DO",
+    "DIGITAL OUTPUT": "DO",
+    "DO-HC": "DO|HIGH_CURRENT",
+    "DO HC": "DO|HIGH_CURRENT",
+    "DO_HC": "DO|HIGH_CURRENT",
+    "DO HIGH CURRENT": "DO|HIGH_CURRENT",
+    "HIGH CURRENT DO": "DO|HIGH_CURRENT",
+    "DO-ISO": "DO|HIGH_CURRENT",
+    "DO ISOLATED": "DO|HIGH_CURRENT",
+    "DO-ISOLATED": "DO|HIGH_CURRENT",
+    "DO-RELAY": "DO|RELAY",
+    "DO RELAY": "DO|RELAY",
+    "DO_RELAY": "DO|RELAY",
+    "RELAY": "DO|RELAY",
+    "RELAY OUTPUT": "DO|RELAY"
+  },
+  "weights": {
+    "unplaced_per_slot": 1000000,
+    "movement_per_slot": 100,
+    "cabinet": 1000,
+    "cioc": 50,
+    "group_cabinet_span": 200,
+    "group_cioc_span": 10
+  },
+  "solver": {
+    "time_limit_s": 30.0,
+    "workers": 8,
+    "seed": 0,
+    "use_greedy_hint": true,
+    "max_model_vars": 1500000
+  },
+  "duplicate_policy": "exclude_all",
+  "max_upload_mb": 50
+}
