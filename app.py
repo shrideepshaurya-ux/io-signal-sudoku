@@ -17,6 +17,7 @@ from src.excel_reader import InputError
 from src.models import RuleConfig, load_config
 from src.rule_engine import rule_catalog
 from src.utilization import compute_utilization
+from src import viz, benchmark
 
 logging.basicConfig(level=logging.INFO, filename="app.log", format="%(asctime)s %(name)s %(message)s")
 log = logging.getLogger("app")
@@ -435,7 +436,8 @@ def page_reports():
                                                                               "Empty baseplates"])
         fig.update_yaxes(range=[0, 100])
         st.plotly_chart(fig, use_container_width=True)
-    tabs = st.tabs(["Cabinets", "CIOCs", "Baseplates", "Cable blocks", "TQs", "Violations", "Signal inspector"])
+    tabs = st.tabs(["Cabinets", "CIOCs", "Baseplates", "Cable blocks", "TQs", "Violations", "Signal inspector",
+                    "TQ dashboard"])
     with tabs[0]:
         df_view(u.cabinets, "cab")
     with tabs[1]:
@@ -450,6 +452,24 @@ def page_reports():
         v = S("validation")
         df_view(pd.DataFrame([{"Rule": i.rule_id, "Severity": i.severity, "Message": i.message}
                               for i in v.violations + v.warnings], columns=["Rule", "Severity", "Message"]), "viol")
+    with tabs[7]:
+        tdf = tqg.tq_dataframe(res.tqs)
+        fig = viz.tq_chart(tdf)
+        if fig is None:
+            st.info("No TQs in this run.")
+        else:
+            m = st.columns(3)
+            m[0].metric("TQs", len(tdf))
+            m[1].metric("Categories", tdf["Category"].nunique())
+            m[2].metric("Errors", int((tdf["Severity"] == "ERROR").sum()))
+            st.plotly_chart(fig, use_container_width=True)
+            ex = tdf.iloc[0]
+            a, b = st.columns(2)
+            a.markdown("**A generic tool says**")
+            a.code("Allocation failed.")
+            b.markdown(f"**This tool says ({ex['Category']})**")
+            b.write(ex["Explanation"])
+            b.write("**Needed to resolve:** " + str(ex["Information needed"]))
     with tabs[6]:
         tags = sorted({s.tag for s in res.signals if s.tag})
         pick = st.selectbox("Signal tag", tags)
@@ -523,6 +543,7 @@ def page_revision():
     cols = st.columns(4)
     for i, (k, v) in enumerate(rep.summary.items()):
         cols[i % 4].metric(k, str(v))
+    _revision_visual(rep, S("rev_a"))
     t = st.tabs(["Changes", "Moved signals", "Affected hardware", "TQ changes"])
     with t[0]:
         df_view(rep.changes, "rchg")
@@ -541,8 +562,198 @@ def page_revision():
     st.download_button("Download Rev B allocation + revision report", data, "revision_report.xlsx")
 
 
+def _explain(res, sid):
+    """Render the 'why here' panel for one signal."""
+    from src.hardware import Topology
+    sig = res.signals[sid]
+    p = res.placements.get(sid)
+    st.markdown(f"#### {sig.tag}")
+    if p:
+        st.json({**Topology(cfg().hardware, cfg().naming).describe(p), "IO type": sig.io_raw,
+                 "Cable / pair": f"{sig.cable_id} / {sig.pair}", "Group": sig.group, "Segregation": sig.seg,
+                 "CHARM type": p.charm_type, "Terminal block": p.terminal_block,
+                 "Mapping status": p.compat_status})
+        st.write("**Why here:** " + p.reason)
+    else:
+        st.error("Unallocated: " + res.unallocated.get(sid, "no reason recorded"))
+    for f in sig.findings:
+        if f.severity != "INFO":
+            st.write(f"[{f.severity}] {f.code}: {f.message}")
+
+
+def page_map():
+    st.header("Cabinet map")
+    res = S("result")
+    if not res or not res.placements:
+        st.info("Run an allocation first (Overview has a one-click demo).")
+        return
+    cabs = sorted({p.cab for p in res.placements.values()})
+    from src.hardware import Topology
+    topo = Topology(cfg().hardware, cfg().naming)
+    c1, c2 = st.columns(2)
+    cab = c1.selectbox("Cabinet", cabs, format_func=topo.system_cabinet)
+    color_by = c2.selectbox("Colour by", ["IO type", "Segregation (A/B)", "Logical group", "CHARM type"])
+    st.caption("Each row is a baseplate (12 CHARM slots). Light grey = free, darker grey = reserved spare "
+               "baseplate. Click a square to see why that signal is there.")
+    fig, lookup = viz.cabinet_map(res, cfg(), cab, color_by)
+    ev = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode="points",
+                         key="cabmap")
+    picked = None
+    try:
+        pts = ev.selection.points if ev and ev.selection else []
+        if pts:
+            picked = lookup.get((int(round(pts[0]["x"])), int(round(pts[0]["y"]))))
+    except Exception:
+        picked = None
+    if picked is not None:
+        _explain(res, picked)
+    else:
+        st.caption("No square selected - or pick a signal below.")
+        tags = sorted(s.tag for s in res.signals if s.sid in res.placements and res.placements[s.sid].cab == cab)
+        t = st.selectbox("Signal in this cabinet", tags)
+        if t:
+            _explain(res, next(s.sid for s in res.signals if s.tag == t and s.sid in res.placements))
+
+
+def _revision_visual(rep, res_a):
+    resb = rep.result_b
+    st.subheader("Before / after map")
+    cabs = sorted({p.cab for p in list(res_a.placements.values()) + list(resb.placements.values())})
+    from src.hardware import Topology
+    topo = Topology(cfg().hardware, cfg().naming)
+    cab = st.selectbox("Cabinet", cabs, format_func=topo.system_cabinet, key="rev_cab")
+    cls = dict(zip(rep.changes["Tag"].str.upper(), rep.changes["Change"]))
+
+    def label(c):
+        if "reallocated" in c:
+            return "Moved"
+        if c.startswith("Added"):
+            return "Added"
+        if c.startswith("Modified"):
+            return "Modified"
+        if c.startswith("Deleted"):
+            return "Deleted"
+        return "Unchanged"
+
+    def a_label(c):
+        k = label(c)
+        return "Moved (old position)" if k == "Moved" else k
+
+    hl_a = {s.sid: a_label(cls.get(s.tag_key, "")) for s in res_a.signals if s.tag}
+    hl_b = {s.sid: label(cls.get(s.tag_key, "")) for s in resb.signals if s.tag}
+    a, b = st.columns(2)
+    fa, _ = viz.cabinet_map(res_a, cfg(), cab, highlight=hl_a, title=f"{res_a.revision}")
+    fb, _ = viz.cabinet_map(resb, cfg(), cab, highlight=hl_b, title=f"{resb.revision}")
+    a.plotly_chart(fa, use_container_width=True, key="vis_a")
+    b.plotly_chart(fb, use_container_width=True, key="vis_b")
+    moved = int(rep.changes["Change"].str.contains("eallocated").sum())
+    st.success(f"{int((rep.changes['Change'] == 'Unchanged signal').sum())} signals kept their exact slot; "
+               f"{moved} moved; {rep.summary['Added']} added; {rep.summary['Deleted']} deleted.")
+
+
+def page_results():
+    st.header("Results and benchmarks")
+    st.subheader("Recorded 10,000-signal run")
+    bp = ROOT / "docs" / "benchmark_10000.json"
+    if bp.exists():
+        d = json.loads(bp.read_text())
+        s = d.get("solver", {})
+        cols = st.columns(4)
+        cols[0].metric("Signals", d["signals"])
+        cols[1].metric("Allocation time (s)", d["allocate_s"])
+        cols[2].metric("Cabinets", d["cabinets"])
+        cols[3].metric("Rule violations", d["violations"])
+        st.caption(f"Status {d['status']} (complete: {d['complete']}); solver {s.get('method')} limit 60 s, "
+                   f"lower-bound cabinets {s.get('lower_bound_cabinets')}; validation {d['validate_s']} s; "
+                   f"memory ~{d['rss_mb']} MB; {d['warnings']} group-sequence warnings. "
+                   "Measured on the developer machine with synthetic data; optimality was not proven.")
+    else:
+        st.info("No recorded benchmark file found.")
+    st.subheader("Live scaling test (runs the real solver now)")
+    sizes = st.multiselect("Signal counts", [250, 500, 1000, 2000, 4000], default=[250, 500, 1000, 2000])
+    tl = st.number_input("Time limit per run (s)", 1.0, 120.0, 10.0)
+    if st.button("Run scaling test") and sizes:
+        bar = st.progress(0.0, text="Starting")
+        try:
+            df = benchmark.run_scaling(sorted(sizes), cfg(), tl,
+                                       lambda i, n, m: bar.progress(i / n, text=m))
+            st.session_state.scaling = df
+        except Exception:
+            log.exception("scaling failed")
+            st.error("Scaling test failed. See app.log.")
+        bar.empty()
+    if S("scaling") is not None:
+        df = S("scaling")
+        st.plotly_chart(viz.scaling_chart(df), use_container_width=True)
+        st.dataframe(df, use_container_width=True)
+    st.subheader("Manual vs automated (your estimate)")
+    c1, c2 = st.columns(2)
+    n = c1.number_input("Signals in the project", 1, 1_000_000, 10000)
+    hrs = c2.number_input("Your team's estimated manual hours", 0.0, 100000.0, 0.0,
+                          help="This number comes from you; the tool does not know it.")
+    sc = S("scaling")
+    if sc is not None and len(sc):
+        r = sc.iloc[-1]
+        per = r["Allocation time (s)"] / r["Signals"]
+        auto_s = per * n
+        st.write(f"Measured automated rate: {per * 1000:.1f} ms/signal -> about **{auto_s:.0f} s** for {n} signals "
+                 "(extrapolated from the largest live run).")
+        if hrs > 0:
+            st.metric("Speed-up vs your manual estimate", f"{hrs * 3600 / max(auto_s, 1):.0f}x")
+    else:
+        st.caption("Run the live scaling test to get a measured rate.")
+
+
+def page_whatif():
+    st.header("Rule what-if")
+    sig = S("signals")
+    if not sig:
+        st.info("Load an IO MDB first.")
+        return
+    st.caption("Switch rules off and re-solve on a copy of the configuration. The what-if result is then "
+               "checked against the FULL rule set, so you can see exactly what breaks.")
+    c = st.columns(4)
+    seg = c[0].checkbox("A/B segregation", cfg().segregation.enabled)
+    grp = c[1].checkbox("Logical grouping", cfg().grouping.enabled)
+    cab = c[2].checkbox("Cable continuity", cfg().cable.enabled)
+    spr = c[3].checkbox("Spare baseplates", cfg().spare.enabled)
+    if st.button("Run what-if", type="primary"):
+        try:
+            with st.spinner("Solving both scenarios..."):
+                base_cfg = cfg().model_copy(deep=True)
+                what = base_cfg.model_copy(deep=True)
+                what.segregation.enabled, what.grouping.enabled = seg, grp
+                what.cable.enabled, what.spare.enabled = cab, spr
+                rows = []
+                for name, cf in (("Baseline (current rules)", base_cfg), ("What-if", what)):
+                    r = allocator.allocate(S("signals"), cf, revision=name)
+                    tqg.generate_tqs(r)
+                    v_own = validator.validate(r, cf)
+                    v_full = validator.validate(r, base_cfg)
+                    u = compute_utilization(r, cf)
+                    rows.append({"Scenario": name, "Allocated": f"{len(r.placements)}/{len(r.signals)}",
+                                 "Cabinets": u.totals["Cabinets required"], "CIOCs": u.totals["CIOCs used"],
+                                 "Baseplates": u.totals["Baseplates used"],
+                                 "Violations (own rules)": len(v_own.violations),
+                                 "Violations vs FULL rules": len(v_full.violations),
+                                 "Rules broken": ", ".join(sorted({i.rule_id for i in v_full.violations})) or "-"})
+                st.session_state.whatif = pd.DataFrame(rows)
+        except Exception:
+            log.exception("what-if failed")
+            st.error("What-if failed. See app.log.")
+    if S("whatif") is not None:
+        st.dataframe(S("whatif"), use_container_width=True)
+        w = S("whatif")
+        if w.iloc[1]["Violations vs FULL rules"] > 0:
+            st.error("With those rules off, the layout breaks the full rule set - this is why the rules exist.")
+        else:
+            st.success("No additional violations against the full rule set for this selection.")
+
+
 PAGES = {"Overview": page_overview, "Upload & Validate": page_upload, "Rule Configuration": page_rules,
-         "Allocation": page_alloc, "Reports": page_reports, "Revision Comparison": page_revision}
+         "Allocation": page_alloc, "Cabinet Map": page_map, "Reports": page_reports,
+         "Revision Comparison": page_revision, "Rule What-if": page_whatif,
+         "Results & Benchmarks": page_results}
 choice = st.sidebar.radio("Page", list(PAGES))
 st.sidebar.caption(f"Profile: {cfg().profile_name} ({cfg().config_id})")
 PAGES[choice]()
